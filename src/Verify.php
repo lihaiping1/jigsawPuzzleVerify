@@ -18,6 +18,8 @@ class Verify
 
     public Image $image;
 
+    public static $tag = '';
+
     public function __construct()
     {
         $this->image = new Image();
@@ -27,19 +29,18 @@ class Verify
      * @param string $ip
      * @return array|bool
      */
-    public function getNewImage(string $ip): array|bool
+    public function getNewImage(): array|bool
     {
         $image = $this->image->createImage();
         $key = uniqid('v').time().mt_rand(1,1000000);
         $key = $key.'_'.$image['concavePosition'][0].'_'.time();
-
         $key = $this->encrypt($key);
         if ( ! $key) {
             return false;
         }
 
         $image['concaveHeight'] = $image['concavePosition'][1];
-        $image['key'] = $image['concavePosition'][1];
+        $image['key'] = $key;
         unset($image['concavePosition']);
         return $image;
     }
@@ -54,26 +55,25 @@ class Verify
      */
     public function verify(string $key, float $x, int $expire = 120, $diff = 2): bool
     {
-       $key = $this->decrypt($key);
-       if ( ! $key) {
-          return false;
-       }
+        $key = $this->decrypt($key);
+        if ( ! $key) {
+            return false;
+        }
+        $tA = explode('_', $key);
+        if ( ! isset($tA[2]) ||  ! isset($tA[1])) {
+            return false;
+        }
 
-       $tA = explode('_', $key);
-       if ( ! isset($tA[2]) ||  ! isset($tA[3])) {
-           return false;
-       }
+        if (time() - $tA[2] > $expire) {
+            new \Exception('已过期', 502);
+        }
 
-       if (time() - $tA[2] > $expire) {
-           new \Exception('已过期', 502);
-       }
+        $_diff = abs($x - $tA[1]);
+        if ($_diff > $diff) {
+            return false;
+        }
 
-       $_diff = abs($x - $tA[1]);
-       if ($_diff > $diff) {
-           return false;
-       }
-
-       return true;
+        return true;
     }
 
     /**
@@ -86,8 +86,9 @@ class Verify
         $cipher = "aes-128-gcm";
         $ivlen = openssl_cipher_iv_length($cipher);
         $iv = openssl_random_pseudo_bytes($ivlen);
-        return openssl_encrypt($data, $cipher, static::$key, $options=0, $iv);
-
+        $tag = static::$tag;
+        $key  = openssl_encrypt($data, $cipher, static::$key, 0, $iv, $tag);
+        return base64_encode($key.'_'.$tag.'_'.$iv);
     }
 
     /**
@@ -97,9 +98,15 @@ class Verify
      */
     public function decrypt(string $data): bool|string
     {
+        $data = base64_decode($data);
+        if ($data === false) {
+            return false;
+        }
+
+        $tA = explode('_', $data);
         $cipher = "aes-128-gcm";
-        $ivlen = openssl_cipher_iv_length($cipher);
-        $iv = openssl_random_pseudo_bytes($ivlen);
-        return openssl_decrypt($data, $cipher, static::$key, $options=0, $iv);
+        $iv = $tA[2] ?? '';
+        $tag = $tA[1] ?? '';
+        return openssl_decrypt($tA[0] ?? '', $cipher, static::$key, $options=0, $iv, $tag);
     }
 }
